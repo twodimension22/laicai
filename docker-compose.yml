@@ -1,0 +1,28 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: ["sleep", "infinity"]
+    stdin_open: true
+    tty: true
+    environment:
+      # Uppercase vars come from the local .env template.
+      ROBINHOOD_USERNAME: ${ROBINHOOD_USERNAME:-}
+      ROBINHOOD_PASSWORD: ${ROBINHOOD_PASSWORD:-}
+      ROBINHOOD_2FA_KEY: ${ROBINHOOD_2FA_KEY:-}
+      # Repo code still reads these lowercase names.
+      robin_username: ${ROBINHOOD_USERNAME:-}
+      robin_password: ${ROBINHOOD_PASSWORD:-}
+      robin_mfa: ${ROBINHOOD_2FA_KEY:-}
+    volumes:
+      - type: bind
+        source: .
+        target: /app
+      - type: volume
+        source: robinhood_tokens
+        target: /root/.tokens
+
+volumes:
+  robinhood_tokens:
