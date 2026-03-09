@@ -2,12 +2,44 @@ from base64 import urlsafe_b64decode as b64d
 from base64 import urlsafe_b64encode as b64e
 from functools import wraps
 from inspect import signature
+from urllib.parse import urlparse
 from zlib import compress, decompress
 
+import requests
 from robin_stocks.gemini.globals import (LOGGED_IN, NONCE,
                                          RETURN_PARSED_JSON_RESPONSE,
                                          SECRET_API_KEY, SESSION,
                                          USE_SANDBOX_URLS)
+
+DEFAULT_TIMEOUT = (5, 30)
+_ALLOWED_HOSTS = {"api.gemini.com", "api.sandbox.gemini.com"}
+
+
+def _validate_allowed_url(url):
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("Only https URLs are allowed: {0}".format(url))
+    if parsed.netloc.lower() not in _ALLOWED_HOSTS:
+        raise ValueError(
+            "Refusing to send an authenticated Gemini request to {0}".format(url)
+        )
+    return url
+
+
+def _parse_json_response(response):
+    if response is None:
+        return None
+    if not response.content:
+        return {}
+
+    content_type = response.headers.get("Content-Type", "")
+    if content_type and "json" not in content_type.lower():
+        raise ValueError(
+            "Expected a JSON response but received Content-Type {0}".format(
+                content_type
+            )
+        )
+    return response.json()
 
 
 def increment_nonce():
@@ -139,16 +171,26 @@ def request_get(url, payload, parse_json):
         get request. If there was no error then the second entry in the tuple will be None. The first entry will either be \
         the raw request response or the parsed JSON response based on whether parse_json is True or not.
     """
+    response = None
     response_error = None
     try:
-        response = SESSION.get(url, params=payload)
+        _validate_allowed_url(url)
+        response = SESSION.get(
+            url, params=payload, timeout=DEFAULT_TIMEOUT, allow_redirects=False
+        )
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for Gemini requests.",
+                response=response,
+            )
         response.raise_for_status()
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         response_error = e
-    # Return either the raw request object so you can call response.text, response.status_code, response.headers, or response.json()
-    # or return the JSON parsed information if you don't care to check the status codes.
     if parse_json:
-        return response.json(), response_error
+        try:
+            return _parse_json_response(response), response_error
+        except ValueError as e:
+            return None, e
     else:
         return response, response_error
 
@@ -167,15 +209,23 @@ def request_post(url, payload, parse_json):
         get request. If there was no error then the second entry in the tuple will be None. The first entry will either be \
         the raw request response or the parsed JSON response based on whether parse_json is True or not.
     """
+    response = None
     response_error = None
     try:
-        response = SESSION.post(url, params=payload)
+        _validate_allowed_url(url)
+        response = SESSION.post(url, timeout=DEFAULT_TIMEOUT, allow_redirects=False)
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for authenticated Gemini POST requests.",
+                response=response,
+            )
         response.raise_for_status()
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         response_error = e
-    # Return either the raw request object so you can call response.text, response.status_code, response.headers, or response.json()
-    # or return the JSON parsed information if you don't care to check the status codes.
     if parse_json:
-        return response.json(), response_error
+        try:
+            return _parse_json_response(response), response_error
+        except ValueError as e:
+            return None, e
     else:
         return response, response_error

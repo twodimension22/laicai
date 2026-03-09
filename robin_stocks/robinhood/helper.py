@@ -1,9 +1,78 @@
 """Contains decorator functions and functions for interacting with global data.
 """
 from functools import wraps
+from urllib.parse import urljoin, urlparse
 
 import requests
 from robin_stocks.robinhood.globals import LOGGED_IN, OUTPUT, SESSION
+
+DEFAULT_TIMEOUT = (5, 30)
+_ALLOWED_HOSTS = {
+    "api.robinhood.com",
+    "bonfire.robinhood.com",
+    "minerva.robinhood.com",
+    "nummus.robinhood.com",
+    "phoenix.robinhood.com",
+}
+
+
+def _validate_allowed_url(url):
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("Only https URLs are allowed: {0}".format(url))
+    if parsed.netloc.lower() not in _ALLOWED_HOSTS:
+        raise ValueError(
+            "Refusing to send an authenticated Robinhood request to {0}".format(url)
+        )
+    return url
+
+
+def _parse_json_response(response):
+    if not response.content:
+        return {}
+
+    content_type = response.headers.get("Content-Type", "")
+    if content_type and "json" not in content_type.lower():
+        raise ValueError(
+            "Expected a JSON response but received Content-Type {0}".format(
+                content_type
+            )
+        )
+
+    return response.json()
+
+
+def _send_session_request(method, url, *, timeout=DEFAULT_TIMEOUT, follow_redirects=False,
+                          max_redirects=3, **kwargs):
+    current_url = _validate_allowed_url(url)
+    request_kwargs = dict(kwargs)
+    request_kwargs["timeout"] = timeout
+
+    while True:
+        response = SESSION.request(
+            method, current_url, allow_redirects=False, **request_kwargs
+        )
+
+        if not follow_redirects or response.status_code not in (301, 302, 303, 307, 308):
+            return response
+
+        location = response.headers.get("Location")
+        if not location:
+            raise requests.exceptions.HTTPError(
+                "Redirect response did not include a Location header.",
+                response=response,
+            )
+
+        max_redirects -= 1
+        if max_redirects < 0:
+            raise requests.exceptions.TooManyRedirects(
+                "Exceeded the maximum number of redirects."
+            )
+
+        current_url = _validate_allowed_url(urljoin(current_url, location))
+        request_kwargs.pop("params", None)
+        request_kwargs.pop("data", None)
+        request_kwargs.pop("json", None)
 
 
 def set_login_state(logged_in):
@@ -239,9 +308,11 @@ def request_document(url, payload=None):
 
     """ 
     try:
-        res = SESSION.get(url, params=payload)
+        res = _send_session_request(
+            "GET", url, params=payload, follow_redirects=True
+        )
         res.raise_for_status()
-    except requests.exceptions.HTTPError as message:
+    except (requests.exceptions.RequestException, ValueError) as message:
         print(message, file=get_output())
         return(None)
 
@@ -272,14 +343,22 @@ def request_get(url, dataType='regular', payload=None, jsonify_data=True):
     res = None
     if jsonify_data:
         try:
-            res = SESSION.get(url, params=payload)
+            res = _send_session_request(
+                "GET", url, params=payload, follow_redirects=True
+            )
             res.raise_for_status()
-            data = res.json()
-        except (requests.exceptions.HTTPError, AttributeError) as message:
+            data = _parse_json_response(res)
+        except (requests.exceptions.RequestException, AttributeError, ValueError) as message:
             print(message, file=get_output())
             return(data)
     else:
-        res = SESSION.get(url, params=payload)
+        try:
+            res = _send_session_request(
+                "GET", url, params=payload, follow_redirects=True
+            )
+        except (requests.exceptions.RequestException, ValueError) as message:
+            print(message, file=get_output())
+            return(None)
         return(res)
     # Only continue to filter data if jsonify_data=True, and Session.get returned status code <200>.
     if (dataType == 'results'):
@@ -301,10 +380,12 @@ def request_get(url, dataType='regular', payload=None, jsonify_data=True):
             print('Found Additional pages.', file=get_output())
         while nextData['next']:
             try:
-                res = SESSION.get(nextData['next'])
+                res = _send_session_request(
+                    "GET", nextData['next'], follow_redirects=True
+                )
                 res.raise_for_status()
-                nextData = res.json()
-            except:
+                nextData = _parse_json_response(res)
+            except (requests.exceptions.RequestException, ValueError):
                 print('Additional pages exist but could not be loaded.', file=get_output())
                 return(data)
             print('Loading page '+str(counter)+' ...', file=get_output())
@@ -344,15 +425,32 @@ def request_post(url, payload=None, timeout=16, json=False, jsonify_data=True):
     try:
         if json:
             update_session('Content-Type', 'application/json')
-            res = SESSION.post(url, json=payload, timeout=timeout)
-            update_session(
-                'Content-Type', 'application/x-www-form-urlencoded; charset=utf-8')
+            try:
+                res = _send_session_request(
+                    "POST", url, json=payload, timeout=timeout
+                )
+            finally:
+                update_session(
+                    'Content-Type', 'application/x-www-form-urlencoded; charset=utf-8')
         else:
-            res = SESSION.post(url, data=payload, timeout=timeout)
-        if res.status_code not in [200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403]:
-            raise Exception("Received "+ str(res.status_code))
-        data = res.json()
-    except Exception as message:
+            res = _send_session_request(
+                "POST", url, data=payload, timeout=timeout
+            )
+        if 300 <= res.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for authenticated POST requests.",
+                response=res,
+            )
+        if res.status_code >= 400:
+            print(
+                "Warning: request_post received status code {0} for {1}".format(
+                    res.status_code, url
+                ),
+                file=get_output(),
+            )
+        if jsonify_data:
+            data = _parse_json_response(res)
+    except (requests.exceptions.RequestException, ValueError) as message:
         print("Error in request_post: {0}".format(message), file=get_output())
     if jsonify_data:
         return(data)
@@ -369,10 +467,15 @@ def request_delete(url):
 
     """
     try:
-        res = SESSION.delete(url)
+        res = _send_session_request("DELETE", url)
+        if 300 <= res.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for authenticated DELETE requests.",
+                response=res,
+            )
         res.raise_for_status()
         data = res
-    except Exception as message:
+    except (requests.exceptions.RequestException, ValueError) as message:
         data = None
         print("Error in request_delete: {0}".format(message), file=get_output())
         

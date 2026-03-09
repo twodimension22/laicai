@@ -36,7 +36,7 @@ If you are contributing to this project and would like to use automatic testing 
 >>> pip install pytest
 >>> pip install pytest-dotenv
 
-You will also need to fill out all the fields in .test.env. I recommend that you rename the file as .env once you are done adding in all your personal information. After that, you can simply run:
+Copy .env.example to .env and fill in only the values you need for the tests you plan to run. The real credentials file should remain untracked. For real accounts, avoid storing the Robinhood password and TOTP seed in the same place unless you fully understand that this weakens MFA. After that, you can simply run:
 
 >>> pytest
 

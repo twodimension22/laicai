@@ -9,6 +9,8 @@ account of your choosing.
 
 NOTE: View the two_factor_log_in.py script to see how automatic
 two-factor loggin in works.
+
+WARNING: This script moves real money.
 '''
 ### REPLACE ME
 amount_to_withdrawl = "REPLACE-ME"
@@ -18,7 +20,7 @@ load_dotenv()
 # Login using two-factor code
 totp = pyotp.TOTP(os.environ['robin_mfa']).now()
 login = r.login(os.environ['robin_username'],
-                os.environ['robin_password'], store_session=True, mfa_code=totp)
+                os.environ['robin_password'], store_session=False, mfa_code=totp)
 # Get the bank account information
 bank_accounts = r.get_linked_bank_accounts()
 account_names = r.filter_data(bank_accounts, 'bank_account_nickname')

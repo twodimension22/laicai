@@ -2,10 +2,43 @@ from functools import wraps
 from inspect import signature
 from json import dumps
 from re import IGNORECASE, split
+from urllib.parse import urlparse
 
 import requests
 from robin_stocks.tda.globals import (LOGGED_IN, RETURN_PARSED_JSON_RESPONSE,
                                       SESSION)
+
+DEFAULT_TIMEOUT = (5, 30)
+_ALLOWED_HOSTS = {"api.tdameritrade.com"}
+
+
+def _validate_allowed_url(url):
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("Only https URLs are allowed: {0}".format(url))
+    if parsed.netloc.lower() not in _ALLOWED_HOSTS:
+        raise ValueError(
+            "Refusing to send an authenticated TD Ameritrade request to {0}".format(
+                url
+            )
+        )
+    return url
+
+
+def _parse_json_response(response):
+    if response is None:
+        return None
+    if not response.content:
+        return {}
+
+    content_type = response.headers.get("Content-Type", "")
+    if content_type and "json" not in content_type.lower():
+        raise ValueError(
+            "Expected a JSON response but received Content-Type {0}".format(
+                content_type
+            )
+        )
+    return response.json()
 
 
 def get_order_number(data):
@@ -112,16 +145,26 @@ def request_get(url, payload, parse_json):
         get request. If there was no error then the second entry in the tuple will be None. The first entry will either be \
         the raw request response or the parsed JSON response based on whether parse_json is True or not.
     """
+    response = None
     response_error = None
     try:
-        response = SESSION.get(url, params=payload)
+        _validate_allowed_url(url)
+        response = SESSION.get(
+            url, params=payload, timeout=DEFAULT_TIMEOUT, allow_redirects=False
+        )
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for TD Ameritrade requests.",
+                response=response,
+            )
         response.raise_for_status()
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         response_error = e
-    # Return either the raw request object so you can call response.text, response.status_code, response.headers, or response.json()
-    # or return the JSON parsed information if you don't care to check the status codes.
     if parse_json:
-        return response.json(), response_error
+        try:
+            return _parse_json_response(response), response_error
+        except ValueError as e:
+            return None, e
     else:
         return response, response_error
 
@@ -140,16 +183,26 @@ def request_post(url, payload, parse_json):
         get request. If there was no error then the second entry in the tuple will be None. The first entry will either be \
         the raw request response or the parsed JSON response based on whether parse_json is True or not.
     """
+    response = None
     response_error = None
     try:
-        response = SESSION.post(url, params=payload)
+        _validate_allowed_url(url)
+        response = SESSION.post(
+            url, params=payload, timeout=DEFAULT_TIMEOUT, allow_redirects=False
+        )
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for authenticated TD Ameritrade POST requests.",
+                response=response,
+            )
         response.raise_for_status()
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         response_error = e
-    # Return either the raw request object so you can call response.text, response.status_code, response.headers, or response.json()
-    # or return the JSON parsed information if you don't care to check the status codes.
     if parse_json:
-        return response.json(), response_error
+        try:
+            return _parse_json_response(response), response_error
+        except ValueError as e:
+            return None, e
     else:
         return response, response_error
 
@@ -168,16 +221,26 @@ def request_data(url, payload, parse_json):
         get request. If there was no error then the second entry in the tuple will be None. The first entry will either be \
         the raw request response or the parsed JSON response based on whether parse_json is True or not.
     """
+    response = None
     response_error = None
     try:
-        response = requests.post(url, data=payload)
+        _validate_allowed_url(url)
+        response = requests.post(
+            url, data=payload, timeout=DEFAULT_TIMEOUT, allow_redirects=False
+        )
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for TD Ameritrade auth requests.",
+                response=response,
+            )
         response.raise_for_status()
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         response_error = e
-    # Return either the raw request object so you can call response.text, response.status_code, response.headers, or response.json()
-    # or return the JSON parsed information if you don't care to check the status codes.
     if parse_json:
-        return response.json(), response_error
+        try:
+            return _parse_json_response(response), response_error
+        except ValueError as e:
+            return None, e
     else:
         return response, response_error
 
@@ -196,16 +259,23 @@ def request_headers(url, payload, parse_json):
         get request. If there was no error then the second entry in the tuple will be None. The first entry will either be \
         the raw request response or the parsed JSON response based on whether parse_json is True or not.
     """
+    response = None
     response_error = None
     try:
-        response = SESSION.post(url, data=dumps(payload))
+        _validate_allowed_url(url)
+        response = SESSION.post(
+            url, data=dumps(payload), timeout=DEFAULT_TIMEOUT, allow_redirects=False
+        )
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for authenticated TD Ameritrade POST requests.",
+                response=response,
+            )
         response.raise_for_status()
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         response_error = e
-    # Return either the raw request object so you can call response.text, response.status_code, response.headers, or response.json()
-    # or return the JSON parsed information if you don't care to check the status codes.
     if parse_json:
-        return response.headers, response_error
+        return response.headers if response is not None else None, response_error
     else:
         return response, response_error
 
@@ -222,15 +292,22 @@ def request_delete(url, parse_json):
         get request. If there was no error then the second entry in the tuple will be None. The first entry will either be \
         the raw request response or the parsed JSON response based on whether parse_json is True or not.
     """
+    response = None
     response_error = None
     try:
-        response = SESSION.delete(url)
+        _validate_allowed_url(url)
+        response = SESSION.delete(
+            url, timeout=DEFAULT_TIMEOUT, allow_redirects=False
+        )
+        if 300 <= response.status_code < 400:
+            raise requests.exceptions.HTTPError(
+                "Redirects are not allowed for authenticated TD Ameritrade DELETE requests.",
+                response=response,
+            )
         response.raise_for_status()
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         response_error = e
-    # Return either the raw request object so you can call response.text, response.status_code, response.headers, or response.json()
-    # or return the JSON parsed information if you don't care to check the status codes.
     if parse_json:
-        return response.headers, response_error
+        return response.headers if response is not None else None, response_error
     else:
         return response, response_error

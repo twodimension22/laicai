@@ -17,7 +17,7 @@ from robin_stocks.robinhood.urls import login_url
 
 DOTENV_PATH = Path(__file__).with_name(".env")
 ROBINHOOD_API_ROOT = "https://api.robinhood.com/"
-TEST_PICKLE_NAME = "_test_auth"
+TEST_CACHE_NAME = "_test_auth"
 
 
 class AuthScriptError(Exception):
@@ -141,7 +141,7 @@ def login_with_diagnostics(
             password=password,
             store_session=False,
             mfa_code=totp_code,
-            pickle_name=TEST_PICKLE_NAME,
+            pickle_name=TEST_CACHE_NAME,
         )
     finally:
         robinhood_auth.request_post = original_request_post

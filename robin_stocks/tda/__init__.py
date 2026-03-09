@@ -1,6 +1,6 @@
 from .accounts import (get_account, get_accounts, get_transaction,
                        get_transactions)
-from .authentication import (generate_encryption_passcode, login,
+from .authentication import (clear_cache, generate_encryption_passcode, login,
                              login_first_time)
 from .helper import (get_login_state, get_order_number, request_data,
                      request_delete, request_get, request_headers,

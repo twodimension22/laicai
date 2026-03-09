@@ -1,20 +1,25 @@
 ''' An example on how to set up logging in.
-You can store your encryption password in .test.env 
-or in a file named .env with the following value
+Copy .env.example to .env and keep the real file untracked. You can store your
+encryption password there with the following value:
 
 tda_encryption_passcode=keep_this_key_somewhere_safe
 '''
 
-import robin_stocks.tda as t
-##!!! Optionally load environment variables from .env or .test.env
 import os
+from getpass import getpass
+
+import robin_stocks.tda as t
+##!!! Optionally load environment variables from .env
 from dotenv import load_dotenv
 load_dotenv()
-keep_this_key_somewhere_safe = os.environ["tda_encryption_passcode"]
+keep_this_key_somewhere_safe = os.environ.get("tda_encryption_passcode")
+if not keep_this_key_somewhere_safe:
+    keep_this_key_somewhere_safe = getpass("TDA encryption passcode: ")
 ##!!!
 
-keep_this_key_somewhere_safe = t.generate_encryption_passcode()
-print("here is a key you can use for encryption: ", keep_this_key_somewhere_safe)
+# Generate a new passcode once with:
+# keep_this_key_somewhere_safe = t.generate_encryption_passcode()
+# Save it somewhere safe before using login_first_time().
 
 #!!! Only call login_first_time once! Delete this code after running the first time!
 t.login_first_time(

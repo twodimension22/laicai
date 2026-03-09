@@ -11,6 +11,8 @@ up to a maximum number of retries if the order does not go through.
 
 NOTE: View the two_factor_log_in.py script to see how automatic
 two-factor loggin in works.
+
+WARNING: This script submits real orders.
 '''
 ### REPLACE ME - order is to buy 1000 shares of BRK.A which should fail for most people
 stock = "BRK.A"
@@ -22,7 +24,12 @@ sleep_time = 1 # in seconds
 load_dotenv()
 # Login using two-factor code
 totp = pyotp.TOTP(os.environ['robin_mfa']).now()
-login = r.login(os.environ['robin_username'], os.environ['robin_password'], store_session=True, mfa_code=totp)
+login = r.login(
+    os.environ['robin_username'],
+    os.environ['robin_password'],
+    store_session=False,
+    mfa_code=totp,
+)
 # Here it is important to set jsonify=False so that you can check
 # status code of your order request. 200 is ok, 400 is bad request,
 # and 404 is unknown url.

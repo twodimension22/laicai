@@ -1,10 +1,85 @@
 import getpass
 import os
-import pickle
 import secrets
 import time
+from pathlib import Path
+
+from robin_stocks._secure_storage import (delete_private_file,
+                                          ensure_private_directory,
+                                          load_private_json,
+                                          write_private_json)
 from robin_stocks.robinhood.helper import *
 from robin_stocks.robinhood.urls import *
+
+CACHE_SUFFIX = ".json"
+LEGACY_CACHE_SUFFIX = ".pickle"
+_CACHE_KEYS = ("access_token", "device_token", "refresh_token", "token_type")
+
+
+def _resolve_cache_dir(pickle_path=""):
+    if pickle_path:
+        cache_dir = Path(pickle_path)
+        if not cache_dir.is_absolute():
+            cache_dir = Path.cwd().joinpath(cache_dir)
+        return cache_dir
+    return Path.home().joinpath(".tokens")
+
+
+def _resolve_cache_paths(pickle_path="", pickle_name=""):
+    cache_dir = _resolve_cache_dir(pickle_path)
+    cache_stem = "robinhood" + pickle_name
+    cache_path = cache_dir.joinpath(cache_stem + CACHE_SUFFIX)
+    legacy_cache_path = cache_dir.joinpath(cache_stem + LEGACY_CACHE_SUFFIX)
+    return cache_path, legacy_cache_path
+
+
+def _warn_on_legacy_cache(legacy_cache_path):
+    if legacy_cache_path.exists():
+        print(
+            "WARNING: Ignoring legacy insecure session cache {0}. "
+            "Log in again to create a JSON cache or delete the file manually.".format(
+                legacy_cache_path.name
+            ),
+            file=get_output(),
+        )
+
+
+def _load_cached_session(cache_path):
+    cache_data = load_private_json(cache_path, required_keys=_CACHE_KEYS)
+    for key in _CACHE_KEYS:
+        if not isinstance(cache_data[key], str):
+            raise ValueError(
+                "Cached Robinhood session value {0} must be stored as a string.".format(
+                    key
+                )
+            )
+    return cache_data
+
+
+def _write_cached_session(cache_path, token_type, access_token, refresh_token, device_token):
+    ensure_private_directory(cache_path.parent)
+    write_private_json(
+        cache_path,
+        {
+            "token_type": token_type,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "device_token": device_token,
+        },
+    )
+
+
+def clear_stored_session(pickle_path="", pickle_name=""):
+    """Deletes stored Robinhood session material from disk."""
+    cache_path, legacy_cache_path = _resolve_cache_paths(pickle_path, pickle_name)
+    cleared = False
+
+    for path in (cache_path, legacy_cache_path):
+        if path.exists():
+            delete_private_file(path)
+            cleared = True
+
+    return cleared
 
 def generate_device_token():
     """Generates a cryptographically secure device token."""
@@ -119,23 +194,12 @@ def _validate_sherrif_id(device_token: str, workflow_id: str):
 
 
 
-def login(username=None, password=None, expiresIn=86400, scope='internal', store_session=True, mfa_code=None, pickle_path="", pickle_name=""):
+def login(username=None, password=None, expiresIn=86400, scope='internal', store_session=False, mfa_code=None, pickle_path="", pickle_name=""):
     """Handles the login process to Robinhood, including multi-factor authentication, session persistence, and verification handling."""
     print("Starting login process...")
     device_token = generate_device_token()
-    home_dir = os.path.expanduser("~")
-    data_dir = os.path.join(home_dir, ".tokens")
-
-    if pickle_path:
-        if not os.path.isabs(pickle_path):
-            pickle_path = os.path.normpath(os.path.join(os.getcwd(), pickle_path))
-        data_dir = pickle_path
-
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
-
-    creds_file = "robinhood" + pickle_name + ".pickle"
-    pickle_path = os.path.join(data_dir, creds_file)
+    cache_path, legacy_cache_path = _resolve_cache_paths(pickle_path, pickle_name)
+    creds_file = cache_path.name
 
     url = login_url()
     login_payload = {
@@ -153,37 +217,39 @@ def login(username=None, password=None, expiresIn=86400, scope='internal', store
 
     if mfa_code:
         login_payload['mfa_code'] = mfa_code
-    # If authentication has been stored in pickle file then load it. Stops login server from being pinged so much.
-    if os.path.isfile(pickle_path):
-        # **Load cached authentication session if available**
-        if store_session:
-            try:
-                with open(pickle_path, 'rb') as f:
-                    pickle_data = pickle.load(f)
-                    access_token = pickle_data['access_token']
-                    token_type = pickle_data['token_type']
-                    refresh_token = pickle_data['refresh_token']
-                    pickle_device_token = pickle_data['device_token']
-                    login_payload['device_token'] = pickle_device_token
-                    set_login_state(True)
-                    update_session(
-                            'Authorization', '{0} {1}'.format(token_type, access_token))
-                    # Try to load account profile to check that authorization token is still valid.
-                    res = request_get(
-                        positions_url(), 'pagination', {'nonzero': 'true'}, jsonify_data=False)
-                    # Raises exception if response code is not 200.
-                    res.raise_for_status()
-                    return({'access_token': access_token, 'token_type': token_type,
-                            'expires_in': expiresIn, 'scope': scope, 
-                            'detail': 'logged in using authentication in {0}'.format(creds_file),
-                            'backup_code': None, 'refresh_token': refresh_token})
-            except Exception:
-                    print(
-                        "ERROR: There was an issue loading pickle file. Authentication may be expired - logging in normally.", file=get_output())
-                    set_login_state(False)
-                    update_session('Authorization', None)
-        else:
-            os.remove(pickle_path)
+
+    if store_session and cache_path.exists():
+        try:
+            cache_data = _load_cached_session(cache_path)
+            access_token = cache_data['access_token']
+            token_type = cache_data['token_type']
+            refresh_token = cache_data['refresh_token']
+            login_payload['device_token'] = cache_data['device_token']
+            set_login_state(True)
+            update_session('Authorization', '{0} {1}'.format(token_type, access_token))
+            res = request_get(
+                positions_url(), 'pagination', {'nonzero': 'true'}, jsonify_data=False
+            )
+            res.raise_for_status()
+            return {
+                'access_token': access_token,
+                'token_type': token_type,
+                'expires_in': expiresIn,
+                'scope': scope,
+                'detail': 'logged in using authentication in {0}'.format(creds_file),
+                'backup_code': None,
+                'refresh_token': refresh_token,
+            }
+        except Exception as exc:
+            print(
+                "ERROR: Could not load stored Robinhood session from {0}: {1}. "
+                "Logging in normally.".format(creds_file, exc),
+                file=get_output(),
+            )
+            set_login_state(False)
+            update_session('Authorization', None)
+    elif store_session:
+        _warn_on_legacy_cache(legacy_cache_path)
 
     # **Attempt to login normally**
     if not username:
@@ -211,12 +277,14 @@ def login(username=None, password=None, expiresIn=86400, scope='internal', store
                 set_login_state(True)
 
             if store_session:
-                with open(pickle_path, 'wb') as f:
-                    pickle.dump({'token_type': data['token_type'],
-                                 'access_token': data['access_token'],
-                                 'refresh_token': data['refresh_token'],
-                                 'device_token': login_payload['device_token']}, f)
-                return data
+                _write_cached_session(
+                    cache_path,
+                    data['token_type'],
+                    data['access_token'],
+                    data['refresh_token'],
+                    login_payload['device_token'],
+                )
+            return data
         except Exception as e:
             print(f"Error during login verification: {e}")
 
@@ -225,8 +293,10 @@ def login(username=None, password=None, expiresIn=86400, scope='internal', store
 
 
 @login_required
-def logout():
+def logout(clear_cache=False, pickle_path="", pickle_name=""):
     """Logs out from Robinhood by clearing session data."""
     set_login_state(False)
     update_session('Authorization', None)
+    if clear_cache:
+        clear_stored_session(pickle_path=pickle_path, pickle_name=pickle_name)
     print("Logged out successfully.")

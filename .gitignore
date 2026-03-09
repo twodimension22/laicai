@@ -1,6 +1,10 @@
 # sensitive environment information
 .env
+.env.local
 data.pickle
+*.pickle
+.tokens/
+robin_documents/
 
 # build and distribution files that are auto-generated
 build/

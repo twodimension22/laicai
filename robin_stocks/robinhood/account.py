@@ -1,5 +1,6 @@
 """Contains functions for getting information related to the user account."""
 import os
+from pathlib import Path
 from uuid import uuid4
 
 from robin_stocks.robinhood.helper import *
@@ -566,14 +567,15 @@ def download_document(url, name=None, dirpath=None):
         name = url[36:].split('/', 1)[0]
 
     if dirpath:
-        directory = dirpath
+        directory = Path(dirpath)
     else:
-        directory = 'robin_documents/'
+        directory = Path.home().joinpath('robin_documents')
 
-    filename = directory + name + ' .pdf'
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    filename = directory.joinpath(name + '.pdf')
+    directory.mkdir(parents=True, exist_ok=True)
 
-    open(filename, 'wb').write(data.content)
+    with filename.open('wb') as output_file:
+        output_file.write(data.content)
     print('Done - Wrote file {}.pdf to {}'.format(name, os.path.abspath(filename)))
 
     return(data)
@@ -596,9 +598,9 @@ def download_all_documents(doctype=None, dirpath=None):
 
     downloaded_files = False
     if dirpath:
-        directory = dirpath
+        directory = Path(dirpath)
     else:
-        directory = 'robin_documents/'
+        directory = Path.home().joinpath('robin_documents')
 
     counter = 0
     for item in documents:
@@ -607,9 +609,10 @@ def download_all_documents(doctype=None, dirpath=None):
             if data:
                 name = item['created_at'][0:10] + '-' + \
                     item['type'] + '-' + item['id']
-                filename = directory + name + '.pdf'
-                os.makedirs(os.path.dirname(filename), exist_ok=True)
-                open(filename, 'wb').write(data.content)
+                filename = directory.joinpath(name + '.pdf')
+                directory.mkdir(parents=True, exist_ok=True)
+                with filename.open('wb') as output_file:
+                    output_file.write(data.content)
                 downloaded_files = True
                 counter += 1
                 print('Writing PDF {}...'.format(counter), file=get_output())
@@ -619,9 +622,10 @@ def download_all_documents(doctype=None, dirpath=None):
                 if data:
                     name = item['created_at'][0:10] + '-' + \
                         item['type'] + '-' + item['id']
-                    filename = directory + name + '.pdf'
-                    os.makedirs(os.path.dirname(filename), exist_ok=True)
-                    open(filename, 'wb').write(data.content)
+                    filename = directory.joinpath(name + '.pdf')
+                    directory.mkdir(parents=True, exist_ok=True)
+                    with filename.open('wb') as output_file:
+                        output_file.write(data.content)
                     downloaded_files = True
                     counter += 1
                     print('Writing PDF {}...'.format(counter), file=get_output())

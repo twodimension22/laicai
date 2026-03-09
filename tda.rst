@@ -6,15 +6,15 @@ you should be able to log in automatically every time after that.
 Loggin in to API
 ^^^^^^^^^^^^^^^^
 The first thing you need to do is create an encryption passcode. Robin-Stocks stores your confidential
-API information in a pickle file on your computer, and encrypts it using a password for your own safety.
+API information in an encrypted JSON cache on your computer, protected by this passcode.
 To generate this passcode, execute the following code.
 
 >>> import robin_stocks.tda as tda
 >>> passcode = tda.generate_encryption_passcode()
 >>> print("my secret passcode is ", passcode)
 
-Write this passcode down and store it in a safe place. You can store the passcode in a .env file as 
-shown in .test.env. In this example, the passcode is stored as tda_encryption_passcode and if you
+Write this passcode down and store it in a safe place. If you use a local .env file, copy .env.example
+to .env first so your real secrets stay untracked. In this example, the passcode is stored as tda_encryption_passcode and if you
 wanted to get the value in your personal scripts you would execute the following code.
 
 >>> import os
@@ -35,7 +35,7 @@ To log in for the first time, execute the following code.
 Please be sure that you do not call login_first_time every time you run a script. You run it only once, 
 and then you should delete the code from your python file. A better solution would be to enter the python interpreter 
 in Terminal or Windows Command Prompt and to execute the login_first_time function from there. login_first_time will save 
-the authentication and refresh token to a pickle file in your home directory. Authorization tokens expire every 30 minutes, 
+the authentication and refresh token to an encrypted JSON cache in your home directory. Authorization tokens expire every 30 minutes, 
 and the refresh token is used by robin_stocks to get you a new authentication token.
 
 So, at the start of every TD Ameritrade script or program you write, you should execute the following code.
@@ -43,7 +43,7 @@ So, at the start of every TD Ameritrade script or program you write, you should 
 >>> import robin_stocks.tda as tda
 >>> tda.login("my-encryption-passcode") # make sure you have called login_first_time as some point.
 
-The login function will use your encryption passcode to decrypt your pickle file, generate a new authorization token 
+The login function will use your encryption passcode to decrypt your cache file, generate a new authorization token 
 if it needs to, and then save your authorization to the requests session information. 
 
 There is an example log in script in the examples folder `Here`_.

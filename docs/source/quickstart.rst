@@ -28,23 +28,21 @@ Basic
 ^^^^^
 
 >>> import robin_stocks.robinhood as r
->>> login = r.login(<username>,<password>)
+>>> login = r.login(<username>,<password>, store_session=False)
 
-You will be prompted for your MFA token if you have MFA enabled and choose to do the above basic example.
+You will be prompted for your MFA token if you have MFA enabled and choose to do the above basic example. Persistent session caching is now opt-in; only pass ``store_session=True`` if you intentionally want tokens written to disk.
 
 With MFA entered programmatically from Time-based One-Time Password (TOTP)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 NOTE: to use this feature, you will have to sign into your robinhood account and turn on two factor authentication.
 Robinhood will ask you which two factor authorization app you want to use. Select "other". Robinhood will present you with
-an alphanumeric code. This code is what you will use for "My2factorAppHere" in the code below. Run the following code and put
-the resulting MFA code into the prompt on your robinhood app.
+an alphanumeric code. This code is what you will use for "My2factorAppHere" in the code below.
 
 >>> import pyotp
 >>> totp  = pyotp.TOTP("My2factorAppHere").now()
->>> print("Current OTP:", totp)
 
-Once you have entered the above MFA code (the totp variable that is printed out) into your Robinhood account, it will give you a backup code.
+Store the TOTP seed carefully and avoid keeping it in the same secret store as your password for real accounts. Once you have entered the above MFA code into your Robinhood account, it will give you a backup code.
 Make sure you do not lose this code or you may be locked out of your account!!! You can also take the exact same "My2factorAppHere" from above
 and enter it into your phone's authentication app, such as Google Authenticator. This will cause the exact same MFA code to be generated on your phone
 as well as your python code. This is important to do if you plan on being away from your computer and need to access your Robinhood account from your phone.
@@ -54,7 +52,7 @@ Now you should be able to login with the following code,
 >>> import pyotp
 >>> import robin_stocks.robinhood as r
 >>> totp  = pyotp.TOTP("My2factorAppHere").now()
->>> login = r.login('joshsmith@email.com','password', mfa_code=totp)
+>>> login = r.login('joshsmith@email.com','password', store_session=False, mfa_code=totp)
 
 Not all of the functions contained in the module need the user to be authenticated. A lot of the functions
 contained in the modules 'stocks' and 'options' do not require authentication, but it's still good practice

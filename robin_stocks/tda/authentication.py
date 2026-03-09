@@ -1,17 +1,93 @@
-import pickle
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from robin_stocks.tda.globals import DATA_DIR_NAME, PICKLE_NAME
+from robin_stocks._secure_storage import (delete_private_file,
+                                          ensure_private_directory,
+                                          load_private_json,
+                                          write_private_json)
+from robin_stocks.tda.globals import CACHE_NAME, DATA_DIR_NAME, LEGACY_CACHE_NAME
 from robin_stocks.tda.helper import (request_data, set_login_state,
                                      update_session)
 from robin_stocks.tda.urls import URLS
 
 
+def _data_dir():
+    return Path.home().joinpath(DATA_DIR_NAME)
+
+
+def _cache_path():
+    return _data_dir().joinpath(CACHE_NAME)
+
+
+def _legacy_cache_path():
+    return _data_dir().joinpath(LEGACY_CACHE_NAME)
+
+
+def _serialize_cache(cipher_suite, client_id, authorization_token, refresh_token,
+                     authorization_timestamp, refresh_timestamp):
+    return {
+        'authorization_token': cipher_suite.encrypt(authorization_token.encode()).decode(),
+        'refresh_token': cipher_suite.encrypt(refresh_token.encode()).decode(),
+        'client_id': cipher_suite.encrypt(client_id.encode()).decode(),
+        'authorization_timestamp': authorization_timestamp.isoformat(),
+        'refresh_timestamp': refresh_timestamp.isoformat(),
+    }
+
+
+def _write_cache(cache_path, cipher_suite, client_id, authorization_token,
+                 refresh_token, authorization_timestamp, refresh_timestamp):
+    ensure_private_directory(cache_path.parent)
+    write_private_json(
+        cache_path,
+        _serialize_cache(
+            cipher_suite,
+            client_id,
+            authorization_token,
+            refresh_token,
+            authorization_timestamp,
+            refresh_timestamp,
+        ),
+    )
+
+
+def _load_cache(cache_path, cipher_suite):
+    cache_data = load_private_json(
+        cache_path,
+        required_keys=(
+            'authorization_token',
+            'refresh_token',
+            'client_id',
+            'authorization_timestamp',
+            'refresh_timestamp',
+        ),
+    )
+
+    return {
+        'access_token': cipher_suite.decrypt(
+            cache_data['authorization_token'].encode()).decode(),
+        'refresh_token': cipher_suite.decrypt(
+            cache_data['refresh_token'].encode()).decode(),
+        'client_id': cipher_suite.decrypt(cache_data['client_id'].encode()).decode(),
+        'authorization_timestamp': datetime.fromisoformat(
+            cache_data['authorization_timestamp']),
+        'refresh_timestamp': datetime.fromisoformat(cache_data['refresh_timestamp']),
+    }
+
+
+def clear_cache():
+    """Deletes stored TD Ameritrade session material from disk."""
+    cleared = False
+    for path in (_cache_path(), _legacy_cache_path()):
+        if path.exists():
+            delete_private_file(path)
+            cleared = True
+    return cleared
+
+
 def login_first_time(encryption_passcode, client_id, authorization_token, refresh_token):
-    """ Stores log in information in a pickle file on the computer. After being used once,
-    user can call login() to automatically read in information from pickle file and refresh
+    """ Stores log in information in a private JSON cache on the computer. After being used once,
+    user can call login() to automatically read in information from that cache and refresh
     authorization tokens when needed.
 
     :param encryption_passcode: Encryption key created by generate_encryption_passcode().
@@ -27,23 +103,15 @@ def login_first_time(encryption_passcode, client_id, authorization_token, refres
     if type(encryption_passcode) is str:
         encryption_passcode = encryption_passcode.encode()
     cipher_suite = Fernet(encryption_passcode)
-    # Create necessary folders and paths for pickle file as defined in globals.
-    data_dir = Path.home().joinpath(DATA_DIR_NAME)
-    if not data_dir.exists():
-        data_dir.mkdir(parents=True)
-    pickle_path = data_dir.joinpath(PICKLE_NAME)
-    if not pickle_path.exists():
-        Path.touch(pickle_path)
-    # Write information to the file.
-    with pickle_path.open("wb") as pickle_file:
-        pickle.dump(
-            {
-                'authorization_token': cipher_suite.encrypt(authorization_token.encode()),
-                'refresh_token': cipher_suite.encrypt(refresh_token.encode()),
-                'client_id': cipher_suite.encrypt(client_id.encode()),
-                'authorization_timestamp': datetime.now(),
-                'refresh_timestamp': datetime.now()
-            }, pickle_file)
+    _write_cache(
+        _cache_path(),
+        cipher_suite,
+        client_id,
+        authorization_token,
+        refresh_token,
+        datetime.now(),
+        datetime.now(),
+    )
 
 
 def login(encryption_passcode):
@@ -57,20 +125,24 @@ def login(encryption_passcode):
     if type(encryption_passcode) is str:
         encryption_passcode = encryption_passcode.encode()
     cipher_suite = Fernet(encryption_passcode)
-    # Check that file exists before trying to read from it.
-    data_dir = Path.home().joinpath(DATA_DIR_NAME)
-    pickle_path = data_dir.joinpath(PICKLE_NAME)
-    if not pickle_path.exists():
+    cache_path = _cache_path()
+    if not cache_path.exists():
+        if _legacy_cache_path().exists():
+            raise FileExistsError(
+                "Legacy insecure TDA pickle cache detected. "
+                "Delete {0} and call login_first_time() again so a JSON cache can be created.".format(
+                    _legacy_cache_path()
+                )
+            )
         raise FileExistsError(
-            "Please Call login_first_time() to create pickle file.")
-    # Read the information from the pickle file.
-    with pickle_path.open("rb") as pickle_file:
-        pickle_data = pickle.load(pickle_file)
-        access_token = cipher_suite.decrypt(pickle_data['authorization_token']).decode()
-        refresh_token = cipher_suite.decrypt(pickle_data['refresh_token']).decode()
-        client_id = cipher_suite.decrypt(pickle_data['client_id']).decode()
-        authorization_timestamp = pickle_data['authorization_timestamp']
-        refresh_timestamp = pickle_data['refresh_timestamp']
+            "Please Call login_first_time() to create the encrypted JSON cache file.")
+
+    cache_data = _load_cache(cache_path, cipher_suite)
+    access_token = cache_data['access_token']
+    refresh_token = cache_data['refresh_token']
+    client_id = cache_data['client_id']
+    authorization_timestamp = cache_data['authorization_timestamp']
+    refresh_timestamp = cache_data['refresh_timestamp']
     # Authorization tokens expire after 30 mins. Refresh tokens expire after 90 days,
     # but you need to request a fresh authorization and refresh token before it expires.
     authorization_delta = timedelta(seconds=1800)
@@ -91,15 +163,15 @@ def login(encryption_passcode):
                 "Refresh token is no longer valid. Call login_first_time() to get a new refresh token.")
         access_token = data["access_token"]
         refresh_token = data["refresh_token"]
-        with pickle_path.open("wb") as pickle_file:
-            pickle.dump(
-                {
-                    'authorization_token': cipher_suite.encrypt(access_token.encode()),
-                    'refresh_token': cipher_suite.encrypt(refresh_token.encode()),
-                    'client_id': cipher_suite.encrypt(client_id.encode()),
-                    'authorization_timestamp': datetime.now(),
-                    'refresh_timestamp': datetime.now()
-                }, pickle_file)
+        _write_cache(
+            cache_path,
+            cipher_suite,
+            client_id,
+            access_token,
+            refresh_token,
+            datetime.now(),
+            datetime.now(),
+        )
     elif (datetime.now() - authorization_timestamp > authorization_delta):
         payload = {
             "grant_type": "refresh_token",
@@ -111,16 +183,15 @@ def login(encryption_passcode):
             raise ValueError(
                 "Refresh token is no longer valid. Call login_first_time() to get a new refresh token.")
         access_token = data["access_token"]
-        # Write new data to file. Do not replace the refresh timestamp.
-        with pickle_path.open("wb") as pickle_file:
-            pickle.dump(
-                {
-                    'authorization_token': cipher_suite.encrypt(access_token.encode()),
-                    'refresh_token': cipher_suite.encrypt(refresh_token.encode()),
-                    'client_id': cipher_suite.encrypt(client_id.encode()),
-                    'authorization_timestamp': datetime.now(),
-                    'refresh_timestamp': refresh_timestamp
-                }, pickle_file)
+        _write_cache(
+            cache_path,
+            cipher_suite,
+            client_id,
+            access_token,
+            refresh_token,
+            datetime.now(),
+            refresh_timestamp,
+        )
     # Store authorization token in session information to be used with API calls.
     auth_token = "Bearer {0}".format(access_token)
     update_session("Authorization", auth_token)

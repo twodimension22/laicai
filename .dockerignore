@@ -1,0 +1,15 @@
+.cursor/
+.env
+.env.*
+!.env.example
+.git
+.github
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.pickle
+*.pdf
+.tokens/
+robin_documents/
+build/
+dist/

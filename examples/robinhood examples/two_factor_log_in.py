@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 This is an example script that will automatically log you in with two factor authentication.
 This script also adds security by using dotenv to store credentials in a safe .env file.
 To use this script, create a new file in the same directory with the name ".env" and
-put all your credentials in the file. An example is in github named ".test.env".
+put all your credentials in the file. Start from the tracked ".env.example" template and keep
+the real file untracked.
 
 OR, you can explicitly providing path to ".env"
 >>>from pathlib import Path  # Python 3.6+ only
@@ -21,10 +22,10 @@ how to do that.
 load_dotenv()
 
 totp = pyotp.TOTP(os.environ['robin_mfa']).now()
-print("Current OTP:", totp)
-# Here I am setting store_session=False so no pickle file is used.
+# Store the session only if you explicitly need a persisted cache on disk.
 login = r.login(os.environ['robin_username'],
                 os.environ['robin_password'], store_session=False, mfa_code=totp)
-# In the login dictionary, you will see that 'detail' is 
-# 'logged in with brand new authentication code.' to show that I am not using a pickle file.
-print(login)
+if login and "access_token" in login:
+    print("Robinhood login succeeded without creating a persisted session.")
+else:
+    print("Robinhood login failed.")
